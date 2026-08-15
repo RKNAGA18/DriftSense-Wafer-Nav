@@ -1,0 +1,157 @@
+# Drift-Sense DRAM Configuration
+# DRAM 6F² Architecture Parameters
+
+architecture:
+  type: "DRAM_6F2"
+  feature_size_nm: 18  # F in nanometers (1x node)
+  f_search_pixels: 6.0  # Feature size F in pixels for search image
+  wl_pitch_multiplier: 2  # Wordline pitch = 2F
+  bl_pitch_multiplier: 3  # Bitline pitch = 3F
+  cap_pitch_multiplier: 2.5  # Capacitor honeycomb pitch = 2.5F
+  cap_diameter_multiplier: 1.2  # Capacitor hole diameter = 1.2F
+  aa_tilt_deg: 26.57  # Active area tilt angle (arctan(1/2))
+  aa_length_multiplier: 3.5  # AA island length relative to F
+  aa_width_multiplier: 1.2  # AA island width relative to F
+  edge_bloom_amplitude: 0.12  # SE yield edge brightness boost
+  ler_enabled: true  # Line Edge Roughness simulation
+  ler_sigma_multiplier: 0.04  # LER displacement as fraction of F
+
+image:
+  size: 1000  # Both reference and search are 1000x1000
+  bit_depth: 8  # 8-bit grayscale [0, 255]
+  # Internal rendering resolution multiplier
+  # The generator works at (size * internal_scale_factor) internally
+  internal_scale_factor: 10
+
+scale:
+  nominal: 10.0  # Nominal magnification ratio
+  min: 9.0  # Minimum scale (for robustness testing)
+  max: 11.0  # Maximum scale
+  jitter_std: 0.3  # Standard deviation for random scale sampling
+
+rotation:
+  min_deg: -2.0
+  max_deg: 2.0
+  jitter_std_deg: 0.5
+
+# Material grayscale intensities (0-255)
+# Based on backscatter yield: Metal > Si > SiO2
+material_intensities:
+  metal_wl: [200, 230]  # Tungsten/TiN wordlines (bright)
+  metal_bl: [180, 210]  # Bitlines
+  silicon_aa: [120, 150]  # Active area silicon
+  oxide_sti: [40, 70]  # Shallow trench isolation (SiO2)
+  cap_hole: [20, 40]  # Capacitor holes (very dark)
+  cap_ring: [160, 190]  # Capacitor electrode rim
+
+# Edge brightness blooming
+edge_bloom:
+  amplitude: 30  # Edge brightness boost
+  kernel_size: 3  # Gradient kernel
+
+# Line Edge Roughness (LER)
+ler:
+  sigma_nm: 1.5  # RMS roughness
+  correlation_length_nm: 20  # Correlation length
+  roughness_exponent: 0.7  # Fractal dimension parameter
+
+# SEM Noise Degradation Parameters
+noise:
+  # Difficulty presets override individual params
+  # Preset options: easy, medium, hard, extreme
+  difficulty_presets:
+    easy:
+      shot_noise_dose: 200
+      blur_sigma_u: 0.8
+      blur_sigma_v: 0.8
+      blur_angle_deg: 0
+      charging_alpha: 0.0
+      charging_beta: 0.0
+      jitter_sigma: 0.0
+      drift_vx: 0.0
+      drift_vy: 0.0
+      mains_amplitude: 0.0
+      contrast_alpha: 1.0
+      contrast_beta: 0
+      contrast_gamma: 1.0
+      salt_pepper_density: 0.0
+    medium:
+      shot_noise_dose: 80
+      blur_sigma_u: 1.2
+      blur_sigma_v: 1.0
+      blur_angle_deg: 15
+      charging_alpha: 0.92
+      charging_beta: 0.02
+      jitter_sigma: 0.3
+      drift_vx: 0.0005
+      drift_vy: 0.0003
+      mains_amplitude: 0.3
+      contrast_alpha: 1.05
+      contrast_beta: -5
+      contrast_gamma: 0.95
+      salt_pepper_density: 0.001
+    hard:
+      shot_noise_dose: 30
+      blur_sigma_u: 2.0
+      blur_sigma_v: 1.0
+      blur_angle_deg: 30
+      charging_alpha: 0.96
+      charging_beta: 0.04
+      jitter_sigma: 0.8
+      drift_vx: 0.001
+      drift_vy: 0.0008
+      mains_amplitude: 0.8
+      contrast_alpha: 1.1
+      contrast_beta: -10
+      contrast_gamma: 0.9
+      salt_pepper_density: 0.003
+    extreme:
+      shot_noise_dose: 10
+      blur_sigma_u: 3.5
+      blur_sigma_v: 1.0
+      blur_angle_deg: 45
+      charging_alpha: 0.98
+      charging_beta: 0.06
+      jitter_sigma: 1.5
+      drift_vx: 0.002
+      drift_vy: 0.001
+      mains_amplitude: 1.2
+      contrast_alpha: 1.15
+      contrast_beta: -15
+      contrast_gamma: 0.85
+      salt_pepper_density: 0.005
+
+# Search image gets heavier noise than reference
+search_noise_multiplier: 1.5  # Multiply noise params for search image
+reference_noise_multiplier: 0.5  # Lighter noise for reference
+
+# Dataset generation
+dataset:
+  num_pairs: 50
+  seed: 42
+  output_dir: "data/pairs"
+  manifest_file: "data/manifest.csv"
+  # Distribution of difficulty levels
+  difficulty_distribution:
+    easy: 0.2
+    medium: 0.4
+    hard: 0.3
+    extreme: 0.1
+  # Minimum distance of target center from search image edge
+  edge_margin_px: 60
+
+# Localization parameters
+localization:
+  # Scale bank for handling magnification uncertainty
+  scale_bank: [9.5, 9.75, 10.0, 10.25, 10.5]
+  # Rotation bank (degrees)
+  rotation_bank_step_deg: 0.5
+  rotation_bank_range_deg: 2.0
+  # Peak selection
+  peak_threshold_ratio: 0.85  # Peaks must be >= 85% of max
+  peak_min_distance: 10  # Minimum pixel distance between peaks
+  # Sub-pixel refinement
+  subpixel_method: "guizar_sicairos"  # or "parabolic"
+  subpixel_upsampling_factor: 100  # kappa for Guizar-Sicairos
+  # Pyramid levels for coarse-to-fine
+  pyramid_levels: 2
