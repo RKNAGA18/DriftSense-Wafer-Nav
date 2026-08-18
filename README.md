@@ -13,8 +13,8 @@ The repository is intentionally organized around reproducibility: a reviewer sho
 Clone the repository and install the required dependencies. It is recommended to use a virtual environment.
 
 ```bash
-git clone <your-github-repo-url>
-cd <your-repository-folder>
+git clone https://github.com/RKNAGA18/DriftSense-Wafer-Nav.git
+cd DriftSense-Wafer-Nav
 ```
 
 Create and activate a virtual environment:
