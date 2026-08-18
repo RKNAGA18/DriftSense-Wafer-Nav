@@ -8,7 +8,7 @@ The repository is intentionally organized around reproducibility: a reviewer sho
 
 ## drive link that consist of visual results for 100 datasets : https://drive.google.com/file/d/1-UoKlGkvRae6ItqvMUxwZyNG77x1K-rS/view?usp=sharing
 
-## demo video youtube link : 
+## demo video youtube link : https://youtu.be/3sGx-kjumUI
 
 ## 1. Repository Contents
 
