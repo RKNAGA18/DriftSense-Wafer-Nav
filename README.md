@@ -36,8 +36,8 @@ Additional project files may be included, but the two primary executable compone
 Clone the repository and enter the project directory:
 
 ```bash
-git clone <your-github-repo-url>
-cd <your-repository-folder>
+git clone https://github.com/RKNAGA18/DriftSense-Wafer-Nav.git
+cd DriftSense-Wafer-Nav
 ```
 
 Create and activate a virtual environment:
