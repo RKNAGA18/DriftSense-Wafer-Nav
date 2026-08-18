@@ -173,6 +173,8 @@ and compare the generated ground-truth coordinates with the coordinate printed b
 
 The evaluation script should also work on unseen image pairs that were not generated during development.
 
+## 6. Method Overview
+
 ```mermaid
 flowchart LR
     A[Reference Image] --> C[Structural Gradient Representation]
