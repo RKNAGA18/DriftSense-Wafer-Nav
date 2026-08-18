@@ -1,153 +1,122 @@
-#!/usr/bin/env python3
-"""Localize reference patterns in search images.
-
-Usage:
-    # Single pair
-    python localize.py --ref data/pairs/0001/reference.png --search data/pairs/0001/search.png
-    
-    # Batch mode from manifest
-    python localize.py --manifest data/manifest.csv --output_dir results/
-
-Output:
-    Predicted (x, y) center coordinates in search-image pixels.
-    Origin (0,0) is top-left; x increases right, y increases downward.
-"""
-import argparse
-import os
-import sys
+import csv
 import time
-import yaml
-import cv2
 import numpy as np
-import pandas as pd
-from tqdm import tqdm
-from src.template_matcher import TemplateMatcher
+import cv2
+
+MANIFEST_PATH = "data/manifest.csv"
+PRED_PATH = "results/predictions.csv"
+TEMPLATE_SIZE = 100          
+TIE_BREAK_RATIO = 0.95       
+CENTER = np.array([500.0, 500.0])
+
+COARSE_ANGLES = (-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0)
+FINE_HALF_RANGE = 0.4
+FINE_STEP = 0.2
+
+def rotate_template(template, angle_deg):
+    if angle_deg == 0.0: return template
+    h, w = template.shape
+    M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle_deg, 1.0)
+    return cv2.warpAffine(template, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+def parabolic_subpixel(corr, row, col):
+    h, w = corr.shape
+    r, c = min(max(row, 1), h - 2), min(max(col, 1), w - 2)
+
+    cx, cy, cz = corr[r, c - 1], corr[r, c], corr[r, c + 1]
+    denom_x = (cx - 2.0 * cy + cz)
+    dx = 0.5 * (cx - cz) / denom_x if abs(denom_x) > 1e-9 else 0.0
+
+    cx2, cz2 = corr[r - 1, c], corr[r + 1, c]
+    denom_y = (cx2 - 2.0 * cy + cz2)
+    dy = 0.5 * (cx2 - cz2) / denom_y if abs(denom_y) > 1e-9 else 0.0
+
+    return col + float(np.clip(dx, -1.0, 1.0)), row + float(np.clip(dy, -1.0, 1.0))
+
+def localize_pair(ref_path, search_path):
+    ref = cv2.imread(ref_path, cv2.IMREAD_GRAYSCALE)
+    search = cv2.imread(search_path, cv2.IMREAD_GRAYSCALE)
+
+    template0 = cv2.resize(ref, (TEMPLATE_SIZE, TEMPLATE_SIZE), interpolation=cv2.INTER_AREA)
+    
+    # Center Crop for Speed
+    OFFSET = 300
+    search_crop = search[OFFSET:700, OFFSET:700]
+
+    best_angle, best_max, best_corr = 0.0, -2.0, None
+    for ang in COARSE_ANGLES:
+        tmpl = rotate_template(template0, ang)
+        corr = cv2.matchTemplate(search_crop, tmpl, cv2.TM_CCOEFF_NORMED)
+        m = float(corr.max())
+        if m > best_max:
+            best_max, best_angle, best_corr = m, ang, corr
+
+    fine_angles = np.arange(best_angle - FINE_HALF_RANGE, best_angle + FINE_HALF_RANGE + 1e-9, FINE_STEP)
+    for ang in fine_angles:
+        tmpl = rotate_template(template0, float(ang))
+        corr = cv2.matchTemplate(search_crop, tmpl, cv2.TM_CCOEFF_NORMED)
+        m = float(corr.max())
+        if m > best_max:
+            best_max, best_angle, best_corr = m, float(ang), corr
+
+    # THE TRUE AMAT RULE: NMS + Phase-Noise Buffer -> Pure Distance Sort
+    max_val = float(best_corr.max())
+    dilated = cv2.dilate(best_corr, np.ones((5, 5), np.float32))
+    mask = (best_corr >= (dilated - 1e-6)) & (best_corr >= TIE_BREAK_RATIO * max_val)
+    ys, xs = np.where(mask)
+
+    best_dist, best_center, best_score = None, None, None
+    half = TEMPLATE_SIZE / 2.0
+    
+    for row, col in zip(ys, xs):
+        sub_col, sub_row = parabolic_subpixel(best_corr, row, col)
+        
+        cx = sub_col + half + OFFSET
+        cy = sub_row + half + OFFSET
+        dist = float(np.hypot(cx - CENTER[0], cy - CENTER[1]))
+        
+        # Pure Distance Tie-Breaker (No arbitrary weights)
+        if best_dist is None or dist < best_dist:
+            best_dist, best_center, best_score = dist, np.array([cx, cy]), best_corr[row, col]
+
+    if best_center is None:
+        return 500.0, 500.0, best_angle, 0.0
+        
+    return float(best_center[0]), float(best_center[1]), best_angle, float(best_score)
 
 def main():
-    parser = argparse.ArgumentParser(description='Localize reference patterns in search images')
-    
-    # Single pair mode
-    parser.add_argument('--ref', type=str, help='Path to reference image')
-    parser.add_argument('--search', type=str, help='Path to search image')
-    
-    # Batch mode
-    parser.add_argument('--manifest', type=str, help='Path to manifest CSV for batch processing')
-    parser.add_argument('--output_dir', type=str, default='results/',
-                        help='Output directory for predictions')
-    
-    # Config
-    parser.add_argument('--config', type=str, default='configs/dram_config.yaml',
-                        help='Path to configuration YAML')
-    
-    args = parser.parse_args()
-    
-    # Load config
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
-    
-    matcher = TemplateMatcher(config)
-    
-    if args.ref and args.search:
-        # Single pair mode
-        ref = cv2.imread(args.ref, cv2.IMREAD_GRAYSCALE)
-        search = cv2.imread(args.search, cv2.IMREAD_GRAYSCALE)
-        
-        if ref is None or search is None:
-            print(f"Error: Could not load images")
-            sys.exit(1)
-        
-        start = time.perf_counter()
-        result = matcher.localize(ref, search)
-        elapsed = time.perf_counter() - start
-        
-        print(f"\nLocalization Result:")
-        print(f"  Predicted center: ({result['x']:.4f}, {result['y']:.4f})")
-        print(f"  Confidence: {result['confidence']:.4f}")
-        print(f"  Best scale: {result['best_scale']:.2f}")
-        print(f"  Best angle: {result['best_angle']:.2f}°")
-        print(f"  Correlation peak: {result['correlation_peak']:.4f}")
-        print(f"  Candidates found: {result['num_candidates']}")
-        print(f"  Runtime: {elapsed*1000:.1f} ms")
-        
-    elif args.manifest:
-        # Batch mode
-        df = pd.read_csv(args.manifest)
-        os.makedirs(args.output_dir, exist_ok=True)
-        
-        print(f"\n{'='*60}")
-        print(f"Drift-Sense Batch Localization")
-        print(f"{'='*60}")
-        print(f"Pairs to process: {len(df)}")
-        print(f"Output: {args.output_dir}")
-        print(f"{'='*60}\n")
-        
-        predictions = []
-        for _, row in tqdm(df.iterrows(), total=len(df), desc="Localizing"):
-            ref = cv2.imread(row['ref_path'], cv2.IMREAD_GRAYSCALE)
-            search = cv2.imread(row['search_path'], cv2.IMREAD_GRAYSCALE)
-            
-            if ref is None or search is None:
-                print(f"Warning: Could not load pair {row['pair_id']}")
-                predictions.append({
-                    'pair_id': row['pair_id'],
-                    'gt_x': row['gt_x'],
-                    'gt_y': row['gt_y'],
-                    'pred_x': np.nan,
-                    'pred_y': np.nan,
-                    'confidence': 0.0,
-                    'runtime_ms': 0.0,
-                    'error_px': np.nan
-                })
-                continue
-            
-            start = time.perf_counter()
-            result = matcher.localize(ref, search)
-            elapsed = time.perf_counter() - start
-            
-            error = np.sqrt((result['x'] - row['gt_x'])**2 + 
-                          (result['y'] - row['gt_y'])**2)
-            
-            predictions.append({
-                'pair_id': row['pair_id'],
-                'ref_path': row['ref_path'],
-                'search_path': row['search_path'],
-                'gt_x': row['gt_x'],
-                'gt_y': row['gt_y'],
-                'pred_x': round(result['x'], 4),
-                'pred_y': round(result['y'], 4),
-                'confidence': round(result['confidence'], 4),
-                'best_scale': result['best_scale'],
-                'best_angle': result['best_angle'],
-                'correlation_peak': round(result['correlation_peak'], 4),
-                'num_candidates': result['num_candidates'],
-                'runtime_ms': round(elapsed * 1000, 1),
-                'error_px': round(error, 4),
-                'difficulty': row.get('difficulty', 'unknown'),
-                'scale': row.get('scale', 10.0),
-                'rotation_deg': row.get('rotation_deg', 0.0)
-            })
-        
-        # Save predictions CSV (contains BOTH ground truth AND predictions)
-        pred_df = pd.DataFrame(predictions)
-        pred_path = os.path.join(args.output_dir, 'predictions.csv')
-        pred_df.to_csv(pred_path, index=False)
-        
-        # Print summary
-        errors = pred_df['error_px'].dropna()
-        print(f"\n{'='*60}")
-        print(f"Batch Localization Complete")
-        print(f"{'='*60}")
-        print(f"Mean error: {errors.mean():.4f} px")
-        print(f"Median error: {errors.median():.4f} px")
-        print(f"Worst error: {errors.max():.4f} px")
-        print(f"Mean runtime: {pred_df['runtime_ms'].mean():.1f} ms")
-        for thresh in [5, 4, 2, 1, 0.5]:
-            rate = (errors <= thresh).mean() * 100
-            print(f"Pass rate @ {thresh}px: {rate:.1f}%")
-        print(f"\nPredictions saved to: {pred_path}")
-    else:
-        parser.print_help()
-        sys.exit(1)
+    with open(MANIFEST_PATH, newline="") as f:
+        rows = list(csv.DictReader(f))
 
-if __name__ == '__main__':
+    out_rows, times, errors = [], [], []
+    
+    for i, row in enumerate(rows):
+        t0 = time.perf_counter()
+        pred_x, pred_y, angle, score = localize_pair(row["ref_path"], row["search_path"])
+        dt = time.perf_counter() - t0
+        times.append(dt)
+
+        out_rows.append({
+            **row, "pred_x": repr(pred_x), "pred_y": repr(pred_y), "inference_time_s": repr(dt),
+        })
+        
+        gt_x, gt_y = float(row["gt_x"]), float(row["gt_y"])
+        err = ((pred_x - gt_x) ** 2 + (pred_y - gt_y) ** 2) ** 0.5
+        errors.append(err)
+        
+        print(f"[{i+1:2d}/{len(rows)}] pred=({pred_x:8.4f},{pred_y:8.4f}) "
+              f"gt=({gt_x:8.4f},{gt_y:8.4f}) err={err:6.3f}px "
+              f"angle={angle:+.2f}deg score={score:.4f} t={dt*1000:.1f}ms")
+
+    with open(PRED_PATH, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(out_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(out_rows)
+        
+    errors = np.array(errors)
+    print(f"\nMean Error: {np.mean(errors):.3f} px")
+    print(f"Pass @ 1px: {np.mean(errors <= 1.0)*100:.1f}%")
+    print(f"Mean inference time: {np.mean(times)*1000:.2f} ms")
+
+if __name__ == "__main__":
     main()
