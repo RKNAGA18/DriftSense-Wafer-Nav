@@ -1,47 +1,41 @@
-import pandas as pd
-import numpy as np
-import subprocess
+import csv
 import time
-import re
-import argparse
-import sys
+import numpy as np
+from localize import localize_pair
 
-def evaluate(manifest_path):
-    df = pd.read_csv(manifest_path)
-    errors = []
-    runtimes = []
+MANIFEST_PATH = "data/manifest.csv"
+
+def main():
+    print("🚀 Running Verified Evaluation Pipeline...")
+    with open(MANIFEST_PATH, newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    errors, times = [], []
     
-    print("Evaluating Pipeline...")
-    for idx, row in df.iterrows():
-        start = time.time()
-        res = subprocess.run(["python", "localize.py", row['ref_path'], row['search_path']], capture_output=True, text=True)
-        t_ms = (time.time() - start) * 1000
-        
-        # Guardrail: Print exact crash logs if the script fails
-        if res.returncode != 0 or not res.stdout.strip():
-            print(f"\n[CRASH LOG] Script Failed on Pair {idx+1}")
-            print(f"STDERR: {res.stderr}")
-            sys.exit(1)
-            
-        coords = re.findall(r"[-+]?\d*\.\d+|\d+", res.stdout)
-        px, py = float(coords[0]), float(coords[1])
-        
-        err = np.sqrt((px - row['gt_x'])**2 + (py - row['gt_y'])**2)
+    for i, row in enumerate(rows):
+        t0 = time.perf_counter()
+        pred_x, pred_y, angle, score = localize_pair(row["ref_path"], row["search_path"])
+        dt = time.perf_counter() - t0
+        times.append(dt)
+
+        gt_x, gt_y = float(row["gt_x"]), float(row["gt_y"])
+        err = float(np.hypot(pred_x - gt_x, pred_y - gt_y))
         errors.append(err)
-        runtimes.append(t_ms)
-        print(f"[{idx+1}/{len(df)}] Error: {err:.4f} px | Time: {t_ms:.1f} ms")
         
+        print(f"[{i+1:3d}/{len(rows)}] Error: {err:6.4f} px | Time: {dt*1000:6.1f} ms")
+
     errors = np.array(errors)
-    print("\n=== FINAL METRICS ===")
-    print(f"Pass @ 5px: {np.mean(errors <= 5.0)*100:.1f}%")
-    print(f"Pass @ 1px: {np.mean(errors <= 1.0)*100:.1f}%")
-    print(f"Sub-pixel (<1px): {np.mean(errors < 1.0)*100:.1f}%")
-    print(f"Mean Error: {np.mean(errors):.4f} px")
-    print(f"Worst-Case Error: {np.max(errors):.4f} px")
-    print(f"Mean Runtime: {np.mean(runtimes):.1f} ms")
+    times = np.array(times)
+    
+    print("\n" + "="*40)
+    print(f"📊 FINAL EVALUATION REPORT ({len(rows)} Pairs)")
+    print("="*40)
+    print(f"Mean Error      : {np.mean(errors):.3f} px")
+    print(f"Median Error    : {np.median(errors):.3f} px")
+    print(f"Worst-case Error: {np.max(errors):.3f} px")
+    print(f"Pass @ 1px      : {np.mean(errors <= 1.0)*100:.1f}%")
+    print(f"Mean Time       : {np.mean(times)*1000:.2f} ms")
+    print("="*40)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--manifest", required=True)
-    args = parser.parse_args()
-    evaluate(args.manifest)
+    main()
