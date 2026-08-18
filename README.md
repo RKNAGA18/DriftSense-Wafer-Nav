@@ -6,6 +6,10 @@ The solution is designed for the Applied Materials problem track in SEMICON Indi
 
 The repository is intentionally organized around reproducibility: a reviewer should be able to clone the repository, install the declared dependencies, generate a sample pair, and run localization directly from the command line without modifying source code.
 
+## drive link that consist of visual results for 100 datasets : https://drive.google.com/file/d/1-UoKlGkvRae6ItqvMUxwZyNG77x1K-rS/view?usp=sharing
+
+## demo video youtube link : 
+
 ## 1. Repository Contents
 
 The submission should contain the following files in the repository root:
